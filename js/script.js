@@ -658,7 +658,11 @@ function setupThemeSwitcher() {
 	select.style.borderRadius = '8px';
 	select.style.padding = '6px 8px';
 	select.style.fontFamily = 'Trebuchet MS, sans-serif';
-	select.style.background = '#ffffff';
+	select.style.fontWeight = '700';
+	select.style.minWidth = '130px';
+	select.style.cursor = 'pointer';
+	select.style.appearance = 'none';
+	select.style.transition = 'box-shadow 0.2s ease, transform 0.2s ease';
 
 	select.innerHTML = `
 		<option value="classic">NASA Blue</option>
@@ -684,6 +688,14 @@ function setupThemeSwitcher() {
 		applyTheme(select.value);
 		updateThemeStatus(select.value);
 		localSet(THEME_STORAGE_KEY, select.value);
+	});
+
+	select.addEventListener('focus', () => {
+		select.style.transform = 'translateY(-1px)';
+	});
+
+	select.addEventListener('blur', () => {
+		select.style.transform = 'translateY(0)';
 	});
 }
 
@@ -727,8 +739,9 @@ function applyThemeToKeyElements(theme, themeName) {
 	const themeSwitcher = document.getElementById('themeSwitcher');
 	if (themeSwitcher) {
 		themeSwitcher.style.background = `linear-gradient(120deg, ${theme['--space-blue']}, ${theme['--accent']})`;
-		themeSwitcher.style.color = '#ffffff';
+		themeSwitcher.style.color = isRedTheme ? '#2b0b0b' : '#ffffff';
 		themeSwitcher.style.border = `1px solid ${theme['--line']}`;
+		themeSwitcher.style.textShadow = isRedTheme ? 'none' : '0 1px 1px rgba(6, 31, 74, 0.45)';
 		themeSwitcher.style.boxShadow = isRedTheme
 			? '0 8px 16px rgba(252, 61, 33, 0.28)'
 			: '0 8px 16px rgba(11, 61, 145, 0.28)';
@@ -739,6 +752,7 @@ function applyThemeToKeyElements(theme, themeName) {
 		themeSwitcherLabel.style.borderColor = theme['--line'];
 		themeSwitcherLabel.style.background = isRedTheme ? 'rgba(255, 240, 227, 0.94)' : 'rgba(249, 253, 255, 0.94)';
 		themeSwitcherLabel.style.color = theme['--text-main'];
+		themeSwitcherLabel.style.boxShadow = `inset 4px 0 0 ${theme['--space-blue']}`;
 	}
 
 	const header = document.querySelector('.site-header');
