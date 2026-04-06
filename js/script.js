@@ -19,7 +19,10 @@ const SPACE_FACTS = [
 // Personal NASA API key for this project
 const NASA_API_KEY = 'aH4Uf99aBm4zRtlFD8BqA7pk0aeRexhbIcQj7HSR';
 const APOD_ENDPOINT = 'https://api.nasa.gov/planetary/apod';
+const APOD_MIN_DATE = '1995-06-16';
 const DESCRIPTION_PREVIEW_LENGTH = 220;
+const MAX_RETRIES = 2;
+const FALLBACK_RANGE_DAYS = 3;
 const THEMES = {
 	classic: {
 		'--space-navy': '#061f4a',
@@ -85,16 +88,8 @@ async function loadImages() {
 
 	showLoading();
 
-	const url = `${APOD_ENDPOINT}?api_key=${NASA_API_KEY}&start_date=${startDate}&end_date=${endDate}&thumbs=true`;
-
 	try {
-		const response = await fetch(url);
-
-		if (!response.ok) {
-			throw new Error('Could not load images from NASA right now.');
-		}
-
-		const apodData = await response.json();
+		const apodData = await fetchApodWithRecovery(startDate, endDate);
 
 		// The API returns an array for date ranges. We reverse it so newest is first.
 		const items = Array.isArray(apodData) ? apodData.reverse() : [apodData];
@@ -103,6 +98,116 @@ async function loadImages() {
 	} catch (error) {
 		showMessage(error.message);
 	}
+}
+
+async function fetchApodWithRecovery(startDate, endDate) {
+	try {
+		// First try: selected date range, with automatic retries.
+		return await fetchApodRange(startDate, endDate, MAX_RETRIES);
+	} catch (error) {
+		// If the full range keeps failing, try a smaller range close to the end date.
+		const safeFallbackEndDate = getSafeFallbackEndDate(endDate);
+		const fallbackStartDate = getFallbackStartDate(safeFallbackEndDate, FALLBACK_RANGE_DAYS);
+
+		try {
+			const fallbackData = await fetchApodRange(fallbackStartDate, safeFallbackEndDate, MAX_RETRIES);
+			resultCount.textContent = `NASA API is busy. Showing a smaller ${FALLBACK_RANGE_DAYS}-day range.`;
+			return fallbackData;
+		} catch (fallbackError) {
+			throw new Error('Could not load images from NASA right now. Please try again in a moment.');
+		}
+	}
+}
+
+async function fetchApodRange(startDate, endDate, retryCount) {
+	const url = `${APOD_ENDPOINT}?api_key=${NASA_API_KEY}&start_date=${startDate}&end_date=${endDate}&thumbs=true`;
+	let response;
+
+	try {
+		response = await fetch(url);
+	} catch (error) {
+		if (retryCount > 0) {
+			await wait(700);
+			return fetchApodRange(startDate, endDate, retryCount - 1);
+		}
+
+		throw new Error('Network issue while contacting NASA API.');
+	}
+
+	if (response.ok) {
+		return response.json();
+	}
+
+	const apiErrorText = await readApiErrorText(response);
+
+	// Retry only temporary/server-side errors.
+	if (retryCount > 0 && isRetriableStatus(response.status)) {
+		await wait(700);
+		return fetchApodRange(startDate, endDate, retryCount - 1);
+	}
+
+	throw new Error(apiErrorText || `NASA API request failed with status ${response.status}.`);
+}
+
+function isRetriableStatus(statusCode) {
+	return statusCode === 429 || statusCode >= 500;
+}
+
+function wait(milliseconds) {
+	return new Promise((resolve) => {
+		setTimeout(resolve, milliseconds);
+	});
+}
+
+function getFallbackStartDate(endDate, daysBack) {
+	const end = new Date(endDate);
+	const fallbackStart = new Date(endDate);
+	fallbackStart.setDate(end.getDate() - (daysBack - 1));
+
+	if (formatDate(fallbackStart) < APOD_MIN_DATE) {
+		return APOD_MIN_DATE;
+	}
+
+	return formatDate(fallbackStart);
+}
+
+function getSafeFallbackEndDate(endDate) {
+	const requestedEnd = new Date(endDate);
+	const latestLikelyPublished = new Date();
+	latestLikelyPublished.setHours(0, 0, 0, 0);
+	latestLikelyPublished.setDate(latestLikelyPublished.getDate() - 1);
+
+	if (requestedEnd > latestLikelyPublished) {
+		return formatDate(latestLikelyPublished);
+	}
+
+	if (formatDate(requestedEnd) < APOD_MIN_DATE) {
+		return APOD_MIN_DATE;
+	}
+
+	return formatDate(requestedEnd);
+}
+
+function formatDate(dateObject) {
+	return dateObject.toISOString().split('T')[0];
+}
+
+async function readApiErrorText(response) {
+	try {
+		const payload = await response.json();
+
+		if (payload && typeof payload.msg === 'string') {
+			return payload.msg;
+		}
+
+		if (payload && payload.error && typeof payload.error.message === 'string') {
+			return payload.error.message;
+		}
+	} catch (error) {
+		return '';
+	}
+
+	return '';
 }
 
 function renderGallery(items) {
@@ -566,7 +671,7 @@ function showLoading() {
 	gallery.innerHTML = `
 		<div class="placeholder">
 			<img src="img/nasa-worm-logo.png" alt="NASA emblem" class="nasa-loading-logo" />
-			<p>traveling the the galaxy at E=mc²</p>
+			<p>Traveling through the galaxy at E=mc²...</p>
 		</div>
 	`;
 }
