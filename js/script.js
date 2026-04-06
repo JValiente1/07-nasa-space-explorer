@@ -15,6 +15,32 @@ const SPACE_FACTS = [
 	'There are more stars in the universe than grains of sand on all beaches on Earth.',
 	'The International Space Station travels around Earth at about 17,500 miles per hour.'
 ];
+const LOCAL_FALLBACK_ITEMS = [
+	{
+		date: 'NASA APOD Offline Mode',
+		title: 'Mission Control Standby',
+		explanation:
+			'NASA APOD is temporarily unavailable right now. Your app is still working. Please try again in a few minutes to load the latest space photos.',
+		url: 'img/nasa-worm-logo.png',
+		media_type: 'image'
+	},
+	{
+		date: 'Quick Link',
+		title: 'Open NASA APOD Website',
+		explanation:
+			'You can still browse APOD directly at https://apod.nasa.gov/apod/ while API requests recover.',
+		url: 'img/nasa-worm-logo.png',
+		media_type: 'image'
+	},
+	{
+		date: 'Status',
+		title: 'Using Local Backup Content',
+		explanation:
+			'This backup keeps your gallery visible when the API has outages, timeouts, or network interruptions.',
+		url: 'img/nasa-worm-logo.png',
+		media_type: 'image'
+	}
+];
 
 // Personal NASA API key for this project
 const NASA_API_KEY = 'aH4Uf99aBm4zRtlFD8BqA7pk0aeRexhbIcQj7HSR';
@@ -114,7 +140,8 @@ async function fetchApodWithRecovery(startDate, endDate) {
 			resultCount.textContent = `NASA API is busy. Showing a smaller ${FALLBACK_RANGE_DAYS}-day range.`;
 			return fallbackData;
 		} catch (fallbackError) {
-			throw new Error('Could not load images from NASA right now. Please try again in a moment.');
+			resultCount.textContent = 'NASA API is currently unavailable. Showing local backup content.';
+			return LOCAL_FALLBACK_ITEMS;
 		}
 	}
 }
