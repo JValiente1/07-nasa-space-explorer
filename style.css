@@ -30,7 +30,7 @@ body {
     radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.26), transparent 32%),
     radial-gradient(circle at 84% 12%, rgba(249, 170, 67, 0.3), transparent 38%),
     radial-gradient(circle at 52% 84%, rgba(2, 191, 231, 0.26), transparent 44%),
-    linear-gradient(160deg, #061f4a 0%, #0b3d91 55%, #105bd8 100%);
+    linear-gradient(160deg, var(--space-navy) 0%, var(--space-blue) 55%, var(--accent) 100%);
 }
 
 body::before,
@@ -90,7 +90,7 @@ h1 {
   font-family: 'Gill Sans', 'Trebuchet MS', sans-serif;
   letter-spacing: 0.8px;
   font-size: clamp(1.6rem, 2.6vw, 2.3rem);
-  color: #0b3d91;
+  color: var(--space-blue);
 }
 
 .logo {
@@ -131,13 +131,13 @@ h1 {
   border: none;
   color: #fff;
   font-weight: 700;
-  background: linear-gradient(120deg, #02bfe7, #0b3d91);
+  background: linear-gradient(120deg, var(--accent), var(--space-blue));
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .filters button:hover {
-  background: linear-gradient(120deg, #00a6d2, #205493);
+  background: linear-gradient(120deg, var(--accent-hover), var(--space-blue));
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(2, 191, 231, 0.38);
 }
@@ -239,7 +239,7 @@ h1 {
 .gallery-item .photo-date {
   font-size: 0.82rem;
   font-weight: 700;
-  color: #205493;
+  color: var(--space-blue);
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin-bottom: 6px;
@@ -258,9 +258,9 @@ h1 {
 
 .read-more-btn {
   margin-top: 10px;
-  background: #f5fbfe;
-  border: 1px solid #9bdaf1;
-  color: #0b3d91;
+  background: var(--sky-glow);
+  border: 1px solid var(--line);
+  color: var(--space-blue);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 0.9rem;
@@ -268,7 +268,7 @@ h1 {
 }
 
 .read-more-btn:hover {
-  background: #e1f3f8;
+  background: var(--line);
 }
 
 .placeholder {

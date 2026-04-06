@@ -1,4 +1,3 @@
-// Find our date picker inputs on the page
 const startInput = document.getElementById('startDate');
 const endInput = document.getElementById('endDate');
 const includeVideosInput = document.getElementById('includeVideos');
@@ -42,96 +41,156 @@ const LOCAL_FALLBACK_ITEMS = [
 	}
 ];
 
-// Personal NASA API key for this project
 const NASA_API_KEY = 'aH4Uf99aBm4zRtlFD8BqA7pk0aeRexhbIcQj7HSR';
 const APOD_ENDPOINT = 'https://api.nasa.gov/planetary/apod';
 const APOD_MIN_DATE = '1995-06-16';
 const DESCRIPTION_PREVIEW_LENGTH = 220;
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 1;
 const FALLBACK_RANGE_DAYS = 3;
+const REQUEST_TIMEOUT_MS = 3500;
+const API_COOLDOWN_MS = 60 * 60 * 1000;
+const APOD_CACHE_KEY = 'nasa-space-explorer-apod-cache-v1';
+const APOD_API_STATUS_KEY = 'nasa-space-explorer-apod-status-v1';
 const THEMES = {
-	classic: {
-		'--space-navy': '#061f4a',
-		'--space-blue': '#0b3d91',
-		'--star-white': '#ffffff',
-		'--sky-glow': '#e1f3f8',
-		'--panel': '#ffffff',
-		'--text-main': '#212121',
-		'--text-soft': '#323a45',
-		'--accent': '#02bfe7',
-		'--accent-hover': '#00a6d2',
-		'--highlight': '#f9aa43',
-		'--line': '#dce4ef'
-	},
+	classic: {},
 	bright: {
-		'--space-navy': '#046b99',
-		'--space-blue': '#105bd8',
-		'--star-white': '#ffffff',
-		'--sky-glow': '#f1fbff',
-		'--panel': '#ffffff',
-		'--text-main': '#212121',
-		'--text-soft': '#323a45',
+		'--space-navy': '#2b0b0b',
+		'--space-blue': '#fc3d21',
+		'--star-white': '#fff6ef',
+		'--sky-glow': '#ffe7d2',
+		'--panel': '#fff7f1',
+		'--text-main': '#241814',
+		'--text-soft': '#55332b',
 		'--accent': '#f9aa43',
-		'--accent-hover': '#ff9d1e',
-		'--highlight': '#02bfe7',
-		'--line': '#dce4ef'
+		'--accent-hover': '#ff7a21',
+		'--highlight': '#fc3d21',
+		'--line': '#f4b27e'
 	}
 };
 const THEME_STORAGE_KEY = 'nasa-space-explorer-theme';
-let modalOverlay;
-let modalMedia;
-let modalTitle;
-let modalDate;
-let modalExplanation;
+const THEME_VARIABLES = [
+	'--space-navy',
+	'--space-blue',
+	'--star-white',
+	'--sky-glow',
+	'--panel',
+	'--text-main',
+	'--text-soft',
+	'--accent',
+	'--accent-hover',
+	'--highlight',
+	'--line'
+];
+let modalOverlay, modalMedia, modalTitle, modalDate, modalExplanation;
+let apiCooldownUntil = 0;
+let defaultThemeValues = null;
+let themeStatusBadge;
 
-// Call the setupDateInputs function from dateRange.js
-// This sets up the date pickers to:
-// - Default to a range of 9 days (from 9 days ago to today)
-// - Restrict dates to NASA's image archive (starting from 1995)
-setupDateInputs(startInput, endInput);
-setupModal();
-setupThemeSwitcher();
-renderRandomFact();
+function localGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function localSet(key, val) { try { localStorage.setItem(key, val); } catch {} }
+function localRemove(key) { try { localStorage.removeItem(key); } catch {} }
 
-// Load images immediately for the default date range.
-loadImages();
+window.addEventListener('error', () => renderEmergencyBackup('A startup error occurred. Showing backup content.'));
+window.addEventListener('unhandledrejection', () => renderEmergencyBackup('A network error occurred. Showing backup content.'));
 
-// Fetch new images whenever the button is clicked.
-getImagesButton.addEventListener('click', loadImages);
+function initializeApp() {
+	if (!startInput || !endInput || !includeVideosInput || !getImagesButton || !resultCount || !gallery) {
+		renderEmergencyBackup('Required page elements are missing. Showing backup content.');
+		return;
+	}
 
-// Update results instantly when the user toggles video visibility.
-includeVideosInput.addEventListener('change', loadImages);
+	// Theme controls should always initialize, even if later startup steps fail.
+	setupThemeSwitcher();
+
+	try {
+		setupDateInputs(startInput, endInput);
+		setupModal();
+		loadPersistedApiCooldown();
+		renderRandomFact();
+		renderOfflineFirstGallery();
+		resultCount.textContent = 'Ready. Showing local backup content. Click Get Space Images to fetch live NASA results.';
+		getImagesButton.addEventListener('click', loadImages);
+		includeVideosInput.addEventListener('change', loadImages);
+	} catch (error) {
+		setupThemeSwitcher();
+		renderEmergencyBackup('Could not start the app. Showing backup content.');
+	}
+}
+
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+	initializeApp();
+}
 
 async function loadImages() {
 	const startDate = startInput.value;
 	const endDate = endInput.value;
 
-	// Basic safety check in case the user selects an invalid range.
 	if (startDate > endDate) {
 		showMessage('Please choose a start date that is before the end date.');
 		return;
 	}
 
-	showLoading();
+	if (isApiCooldownActive()) {
+		const cachedItems = getCachedApodItems();
+		resultCount.textContent = cachedItems
+			? `NASA API is timing out. Retrying in ${getCooldownSecondsRemaining()}s. Showing cached APOD results.`
+			: `NASA API is timing out. Retrying in ${getCooldownSecondsRemaining()}s. Showing local backup content.`;
+		renderGallery(cachedItems || LOCAL_FALLBACK_ITEMS);
+		return;
+	}
+
+	if (hasVisibleCards()) {
+		resultCount.textContent = 'Loading latest NASA images... Keeping current results visible.';
+	} else {
+		showLoading();
+	}
 
 	try {
 		const apodData = await fetchApodWithRecovery(startDate, endDate);
 
-		// The API returns an array for date ranges. We reverse it so newest is first.
 		const items = Array.isArray(apodData) ? apodData.reverse() : [apodData];
+		saveApodCache(items, startDate, endDate);
 
 		renderGallery(items);
 	} catch (error) {
-		showMessage(error.message);
+		const cachedItems = getCachedApodItems();
+		resultCount.textContent = cachedItems
+			? 'NASA API is unavailable (504 timeout). Showing cached APOD results.'
+			: 'NASA API is unavailable (504 timeout). Showing local backup content.';
+		renderGallery(cachedItems || LOCAL_FALLBACK_ITEMS);
 	}
 }
 
+function renderOfflineFirstGallery() {
+	const cachedItems = getCachedApodItems();
+
+	if (cachedItems) {
+		resultCount.textContent = 'Showing cached APOD results. Click Get Space Images to refresh live data.';
+		renderGallery(cachedItems);
+		return;
+	}
+
+	resultCount.textContent = 'Showing local backup content. Click Get Space Images to fetch live NASA results.';
+	renderGallery(LOCAL_FALLBACK_ITEMS);
+}
+
 async function fetchApodWithRecovery(startDate, endDate) {
+	if (isApiCooldownActive()) {
+		resultCount.textContent = `NASA API is still recovering. Retrying in ${getCooldownSecondsRemaining()}s.`;
+		return getCachedApodItems() || LOCAL_FALLBACK_ITEMS;
+	}
+
 	try {
-		// First try: selected date range, with automatic retries.
 		return await fetchApodRange(startDate, endDate, MAX_RETRIES);
 	} catch (error) {
-		// If the full range keeps failing, try a smaller range close to the end date.
+		if (shouldEnterCooldown(error)) {
+			startApiCooldown();
+			resultCount.textContent = `NASA API timed out. Waiting ${getCooldownSecondsRemaining()}s before next retry.`;
+			return getCachedApodItems() || LOCAL_FALLBACK_ITEMS;
+		}
+
 		const safeFallbackEndDate = getSafeFallbackEndDate(endDate);
 		const fallbackStartDate = getFallbackStartDate(safeFallbackEndDate, FALLBACK_RANGE_DAYS);
 
@@ -140,10 +199,71 @@ async function fetchApodWithRecovery(startDate, endDate) {
 			resultCount.textContent = `NASA API is busy. Showing a smaller ${FALLBACK_RANGE_DAYS}-day range.`;
 			return fallbackData;
 		} catch (fallbackError) {
+			startApiCooldown();
 			resultCount.textContent = 'NASA API is currently unavailable. Showing local backup content.';
-			return LOCAL_FALLBACK_ITEMS;
+			return getCachedApodItems() || LOCAL_FALLBACK_ITEMS;
 		}
 	}
+}
+
+function saveApodCache(items, startDate, endDate) {
+	if (!Array.isArray(items) || items.length === 0) return;
+	localSet(APOD_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), startDate, endDate, items }));
+}
+
+function getCachedApodItems() {
+	try {
+		const raw = localGet(APOD_CACHE_KEY);
+		if (!raw) return null;
+		const payload = JSON.parse(raw);
+		if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) return null;
+		return payload.items;
+	} catch {
+		return null;
+	}
+}
+
+function startApiCooldown() {
+	apiCooldownUntil = Date.now() + API_COOLDOWN_MS;
+	localSet(APOD_API_STATUS_KEY, JSON.stringify({ apiCooldownUntil }));
+}
+
+function isApiCooldownActive() {
+	if (apiCooldownUntil !== 0 && Date.now() >= apiCooldownUntil) {
+		apiCooldownUntil = 0;
+		localRemove(APOD_API_STATUS_KEY);
+		return false;
+	}
+	return Date.now() < apiCooldownUntil;
+}
+
+function getCooldownSecondsRemaining() {
+	return Math.ceil(Math.max(apiCooldownUntil - Date.now(), 0) / 1000);
+}
+
+function loadPersistedApiCooldown() {
+	try {
+		const raw = localGet(APOD_API_STATUS_KEY);
+		if (!raw) return;
+		const payload = JSON.parse(raw);
+		if (!payload || typeof payload.apiCooldownUntil !== 'number') {
+			localRemove(APOD_API_STATUS_KEY);
+			return;
+		}
+		apiCooldownUntil = payload.apiCooldownUntil;
+		if (Date.now() >= apiCooldownUntil) {
+			apiCooldownUntil = 0;
+			localRemove(APOD_API_STATUS_KEY);
+		}
+	} catch {
+		apiCooldownUntil = 0;
+	}
+}
+
+function shouldEnterCooldown(error) {
+	const message = (error && error.message ? error.message : '').toLowerCase();
+	return ['status 504', 'status 502', 'status 503', 'network issue', 'failed to fetch', 'abort']
+		.some(phrase => message.includes(phrase));
 }
 
 async function fetchApodRange(startDate, endDate, retryCount) {
@@ -151,7 +271,7 @@ async function fetchApodRange(startDate, endDate, retryCount) {
 	let response;
 
 	try {
-		response = await fetch(url);
+		response = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS);
 	} catch (error) {
 		if (retryCount > 0) {
 			await wait(700);
@@ -161,13 +281,11 @@ async function fetchApodRange(startDate, endDate, retryCount) {
 		throw new Error('Network issue while contacting NASA API.');
 	}
 
-	if (response.ok) {
-		return response.json();
-	}
+	if (response.ok) return response.json();
+	if (response.status === 504) throw new Error('NASA API request failed with status 504.');
 
 	const apiErrorText = await readApiErrorText(response);
 
-	// Retry only temporary/server-side errors.
 	if (retryCount > 0 && isRetriableStatus(response.status)) {
 		await wait(700);
 		return fetchApodRange(startDate, endDate, retryCount - 1);
@@ -176,26 +294,28 @@ async function fetchApodRange(startDate, endDate, retryCount) {
 	throw new Error(apiErrorText || `NASA API request failed with status ${response.status}.`);
 }
 
-function isRetriableStatus(statusCode) {
-	return statusCode === 429 || statusCode >= 500;
+function hasVisibleCards() {
+	return gallery.querySelector('.gallery-item') !== null;
 }
 
-function wait(milliseconds) {
-	return new Promise((resolve) => {
-		setTimeout(resolve, milliseconds);
-	});
+async function fetchWithTimeout(url, timeoutMs) {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		return await fetch(url, { signal: controller.signal });
+	} finally {
+		clearTimeout(timeoutId);
+	}
 }
+
+const isRetriableStatus = statusCode => statusCode === 429 || statusCode >= 500;
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function getFallbackStartDate(endDate, daysBack) {
 	const end = new Date(endDate);
 	const fallbackStart = new Date(endDate);
 	fallbackStart.setDate(end.getDate() - (daysBack - 1));
-
-	if (formatDate(fallbackStart) < APOD_MIN_DATE) {
-		return APOD_MIN_DATE;
-	}
-
-	return formatDate(fallbackStart);
+	return formatDate(fallbackStart) < APOD_MIN_DATE ? APOD_MIN_DATE : formatDate(fallbackStart);
 }
 
 function getSafeFallbackEndDate(endDate) {
@@ -203,56 +323,27 @@ function getSafeFallbackEndDate(endDate) {
 	const latestLikelyPublished = new Date();
 	latestLikelyPublished.setHours(0, 0, 0, 0);
 	latestLikelyPublished.setDate(latestLikelyPublished.getDate() - 1);
-
-	if (requestedEnd > latestLikelyPublished) {
-		return formatDate(latestLikelyPublished);
-	}
-
-	if (formatDate(requestedEnd) < APOD_MIN_DATE) {
-		return APOD_MIN_DATE;
-	}
-
+	if (requestedEnd > latestLikelyPublished) return formatDate(latestLikelyPublished);
+	if (formatDate(requestedEnd) < APOD_MIN_DATE) return APOD_MIN_DATE;
 	return formatDate(requestedEnd);
 }
 
-function formatDate(dateObject) {
-	return dateObject.toISOString().split('T')[0];
-}
+const formatDate = dateObject => dateObject.toISOString().split('T')[0];
 
 async function readApiErrorText(response) {
 	try {
 		const payload = await response.json();
-
-		if (payload && typeof payload.msg === 'string') {
-			return payload.msg;
-		}
-
-		if (payload && payload.error && typeof payload.error.message === 'string') {
-			return payload.error.message;
-		}
-	} catch (error) {
+		if (payload && typeof payload.msg === 'string') return payload.msg;
+		if (payload && payload.error && typeof payload.error.message === 'string') return payload.error.message;
+	} catch {
 		return '';
 	}
-
 	return '';
 }
 
 function renderGallery(items) {
 	const shouldIncludeVideos = includeVideosInput.checked;
-
-	// Keep images by default. When videos are enabled, include all media entries.
-	// Non-image media gets a clear external link so content is still accessible.
-	const visibleItems = items.filter((item) => {
-		if (item.media_type === 'image') {
-			return true;
-		}
-
-		if (shouldIncludeVideos) {
-			return true;
-		}
-
-		return false;
-	});
+	const visibleItems = items.filter(item => item.media_type === 'image' || shouldIncludeVideos);
 
 	if (visibleItems.length === 0) {
 		setResultCount(0);
@@ -270,8 +361,6 @@ function renderGallery(items) {
 		card.setAttribute('tabindex', '0');
 		card.setAttribute('aria-label', `Open details for ${item.title}`);
 
-		const mediaElement = createMediaElement(item);
-
 		const cardContent = document.createElement('div');
 		cardContent.className = 'card-content';
 
@@ -287,20 +376,15 @@ function renderGallery(items) {
 		cardContent.appendChild(titleHeading);
 		addDescription(cardContent, item.explanation);
 
-		// For videos and other non-image media, provide an explicit open link.
 		if (item.media_type !== 'image' && item.url) {
 			cardContent.appendChild(createMediaLink(item.url, 'Open media in a new tab'));
 		}
 
-		card.appendChild(mediaElement);
+		card.appendChild(createMediaElement(item));
 		card.appendChild(cardContent);
 
 		card.addEventListener('click', (event) => {
-			if (event.target.closest('.read-more-btn')) {
-				return;
-			}
-
-			openModal(item);
+			if (!event.target.closest('.read-more-btn')) openModal(item);
 		});
 
 		card.addEventListener('keydown', (event) => {
@@ -338,26 +422,15 @@ function setupModal() {
 	modalDate = modalOverlay.querySelector('.apod-modal-date');
 	modalExplanation = modalOverlay.querySelector('.apod-modal-explanation');
 
-	const closeButton = modalOverlay.querySelector('.apod-modal-close');
-	closeButton.addEventListener('click', closeModal);
-
-	modalOverlay.addEventListener('click', (event) => {
-		if (event.target === modalOverlay) {
-			closeModal();
-		}
-	});
-
-		document.addEventListener('keydown', (event) => {
-		if (event.key === 'Escape' && modalOverlay.classList.contains('is-open')) {
-			closeModal();
-		}
+	modalOverlay.querySelector('.apod-modal-close').addEventListener('click', closeModal);
+	modalOverlay.addEventListener('click', (event) => { if (event.target === modalOverlay) closeModal(); });
+	document.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape' && modalOverlay.classList.contains('is-open')) closeModal();
 	});
 }
 
 function injectModalStyles() {
-	if (document.getElementById('apod-modal-styles')) {
-		return;
-	}
+	if (document.getElementById('apod-modal-styles')) return;
 
 	const styleTag = document.createElement('style');
 	styleTag.id = 'apod-modal-styles';
@@ -504,20 +577,22 @@ function injectModalStyles() {
 	document.head.appendChild(styleTag);
 }
 
+function createVideoIframe(item) {
+	const videoFrame = document.createElement('iframe');
+	videoFrame.src = item.url;
+	videoFrame.title = item.title;
+	videoFrame.loading = 'lazy';
+	videoFrame.allowFullscreen = true;
+	return videoFrame;
+}
+
 function openModal(item) {
-	if (!modalOverlay) {
-		return;
-	}
+	if (!modalOverlay) return;
 
 	modalMedia.innerHTML = '';
 
 	if (item.media_type === 'video') {
-		const videoFrame = document.createElement('iframe');
-		videoFrame.src = item.url;
-		videoFrame.title = item.title;
-		videoFrame.loading = 'lazy';
-		videoFrame.allowFullscreen = true;
-		modalMedia.appendChild(videoFrame);
+		modalMedia.appendChild(createVideoIframe(item));
 	} else {
 		const image = document.createElement('img');
 		image.src = item.hdurl || item.url;
@@ -529,29 +604,21 @@ function openModal(item) {
 	modalDate.textContent = item.date || 'Unknown date';
 	modalTitle.textContent = item.title || 'Untitled';
 	modalExplanation.textContent = item.explanation || 'No description available.';
-
 	modalOverlay.classList.add('is-open');
 	document.body.style.overflow = 'hidden';
 }
 
 function closeModal() {
-	if (!modalOverlay) {
-		return;
-	}
-
+	if (!modalOverlay) return;
 	modalOverlay.classList.remove('is-open');
 	document.body.style.overflow = '';
 }
 
 function renderRandomFact() {
 	const existingFactBox = document.getElementById('spaceFactBox');
+	if (existingFactBox) existingFactBox.remove();
 
-	if (existingFactBox) {
-		existingFactBox.remove();
-	}
-
-	const randomIndex = Math.floor(Math.random() * SPACE_FACTS.length);
-	const randomFact = SPACE_FACTS[randomIndex];
+	const randomFact = SPACE_FACTS[Math.floor(Math.random() * SPACE_FACTS.length)];
 
 	const factBox = document.createElement('section');
 	factBox.id = 'spaceFactBox';
@@ -594,40 +661,154 @@ function setupThemeSwitcher() {
 	select.style.background = '#ffffff';
 
 	select.innerHTML = `
-		<option value="classic">Classic NASA Blue</option>
-		<option value="bright">Bright Mission Control</option>
+		<option value="classic">NASA Blue</option>
+		<option value="bright">NASA Red</option>
 	`;
 
 	wrapper.appendChild(labelText);
 	wrapper.appendChild(select);
 	filters.insertBefore(wrapper, getImagesButton);
 
-	const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'classic';
+	const savedTheme = localGet(THEME_STORAGE_KEY) || 'classic';
 	select.value = savedTheme;
 	applyTheme(savedTheme);
+	updateThemeStatus(savedTheme);
 
 	select.addEventListener('change', () => {
 		applyTheme(select.value);
-		localStorage.setItem(THEME_STORAGE_KEY, select.value);
+		updateThemeStatus(select.value);
+		localSet(THEME_STORAGE_KEY, select.value);
+	});
+
+	select.addEventListener('input', () => {
+		applyTheme(select.value);
+		updateThemeStatus(select.value);
+		localSet(THEME_STORAGE_KEY, select.value);
 	});
 }
 
 function applyTheme(themeName) {
-	const theme = THEMES[themeName] || THEMES.classic;
+	if (!defaultThemeValues) {
+		defaultThemeValues = getCurrentCssThemeValues();
+	}
+
+	const selectedTheme = THEMES[themeName] || THEMES.classic;
+	const theme = { ...defaultThemeValues, ...selectedTheme };
 
 	Object.entries(theme).forEach(([variableName, value]) => {
 		document.documentElement.style.setProperty(variableName, value);
 	});
+
+	applyThemeToKeyElements(theme, themeName);
+}
+
+function applyThemeToKeyElements(theme, themeName) {
+	const isRedTheme = themeName === 'bright';
+
+	document.body.style.background = `
+		radial-gradient(circle at 12% 18%, ${isRedTheme ? 'rgba(255, 206, 160, 0.34)' : 'rgba(255, 255, 255, 0.26)'}, transparent 32%),
+		radial-gradient(circle at 84% 12%, rgba(249, 170, 67, 0.3), transparent 38%),
+		radial-gradient(circle at 52% 84%, ${isRedTheme ? 'rgba(252, 61, 33, 0.24)' : 'rgba(2, 191, 231, 0.26)'}, transparent 44%),
+		linear-gradient(160deg, ${theme['--space-navy']} 0%, ${theme['--space-blue']} 55%, ${theme['--accent']} 100%)
+	`;
+
+	const heading = document.querySelector('h1');
+	if (heading) {
+		heading.style.color = theme['--space-blue'];
+		heading.style.textShadow = isRedTheme ? '0 2px 8px rgba(255, 247, 235, 0.45)' : '';
+	}
+
+	const actionButton = document.querySelector('.filters button');
+	if (actionButton) {
+		actionButton.style.background = `linear-gradient(120deg, ${theme['--accent']}, ${theme['--space-blue']})`;
+		actionButton.style.color = isRedTheme ? '#2b0b0b' : '#ffffff';
+	}
+
+	const themeSwitcher = document.getElementById('themeSwitcher');
+	if (themeSwitcher) {
+		themeSwitcher.style.background = `linear-gradient(120deg, ${theme['--space-blue']}, ${theme['--accent']})`;
+		themeSwitcher.style.color = '#ffffff';
+		themeSwitcher.style.border = `1px solid ${theme['--line']}`;
+		themeSwitcher.style.boxShadow = isRedTheme
+			? '0 8px 16px rgba(252, 61, 33, 0.28)'
+			: '0 8px 16px rgba(11, 61, 145, 0.28)';
+	}
+
+	const themeSwitcherLabel = document.querySelector('label[for="themeSwitcher"]');
+	if (themeSwitcherLabel) {
+		themeSwitcherLabel.style.borderColor = theme['--line'];
+		themeSwitcherLabel.style.background = isRedTheme ? 'rgba(255, 240, 227, 0.94)' : 'rgba(249, 253, 255, 0.94)';
+		themeSwitcherLabel.style.color = theme['--text-main'];
+	}
+
+	const header = document.querySelector('.site-header');
+	if (header) {
+		header.style.background = isRedTheme ? 'rgba(255, 241, 229, 0.96)' : 'rgba(255, 255, 255, 0.93)';
+		header.style.borderColor = theme['--line'];
+	}
+
+	const filtersPanel = document.querySelector('.filters');
+	if (filtersPanel) {
+		filtersPanel.style.background = isRedTheme ? 'rgba(255, 246, 236, 0.96)' : 'rgba(255, 255, 255, 0.92)';
+		filtersPanel.style.borderColor = theme['--line'];
+	}
+
+	document.querySelectorAll('.gallery-item').forEach((element) => {
+		element.style.borderColor = theme['--line'];
+		element.style.background = theme['--panel'];
+	});
+
+	document.querySelectorAll('.photo-date').forEach((element) => {
+		element.style.color = theme['--space-blue'];
+	});
+
+	document.querySelectorAll('.read-more-btn').forEach((element) => {
+		element.style.color = theme['--space-blue'];
+		element.style.background = theme['--sky-glow'];
+		element.style.borderColor = theme['--line'];
+	});
+
+	if (resultCount) {
+		resultCount.style.color = isRedTheme ? '#fff3e6' : '';
+	}
+}
+
+function updateThemeStatus(themeName) {
+	if (!themeStatusBadge) {
+		themeStatusBadge = document.createElement('p');
+		themeStatusBadge.id = 'themeStatusBadge';
+		themeStatusBadge.style.margin = '0 4px 10px';
+		themeStatusBadge.style.fontWeight = '700';
+		themeStatusBadge.style.fontSize = '0.9rem';
+		themeStatusBadge.style.color = '#ffffff';
+		themeStatusBadge.style.textShadow = '0 2px 8px rgba(6, 31, 74, 0.32)';
+
+		if (resultCount && resultCount.parentNode) {
+			resultCount.parentNode.insertBefore(themeStatusBadge, resultCount);
+		}
+	}
+
+	themeStatusBadge.textContent = `Active theme: ${themeName}`;
+}
+
+function getCurrentCssThemeValues() {
+	const computed = getComputedStyle(document.documentElement);
+	const values = {};
+
+	THEME_VARIABLES.forEach((variableName) => {
+		const value = computed.getPropertyValue(variableName).trim();
+		if (value) {
+			values[variableName] = value;
+		}
+	});
+
+	return values;
 }
 
 function createMediaElement(item) {
 	if (item.media_type === 'video') {
-		const videoFrame = document.createElement('iframe');
+		const videoFrame = createVideoIframe(item);
 		videoFrame.className = 'video-frame';
-		videoFrame.src = item.url;
-		videoFrame.title = item.title;
-		videoFrame.loading = 'lazy';
-		videoFrame.allowFullscreen = true;
 		return videoFrame;
 	}
 
@@ -689,8 +870,7 @@ function addDescription(container, fullText) {
 }
 
 function setResultCount(count) {
-	const noun = count === 1 ? 'result' : 'results';
-	resultCount.textContent = `Showing ${count} ${noun}`;
+	resultCount.textContent = `Showing ${count} ${count === 1 ? 'result' : 'results'}`;
 }
 
 function showLoading() {
@@ -705,10 +885,24 @@ function showLoading() {
 
 function showMessage(message) {
 	setResultCount(0);
+	gallery.innerHTML = `<div class="placeholder"><p>${message}</p></div>`;
+}
 
-	gallery.innerHTML = `
-		<div class="placeholder">
-			<p>${message}</p>
-		</div>
-	`;
+function renderEmergencyBackup(message) {
+	if (!gallery || !resultCount) return;
+
+	resultCount.textContent = 'Showing local backup content.';
+
+	const cardsHtml = LOCAL_FALLBACK_ITEMS.map(item => `
+		<article class="gallery-item">
+			<img src="${item.url}" alt="${item.title}" loading="lazy" />
+			<div class="card-content">
+				<p class="photo-date">${item.date}</p>
+				<h2 class="photo-title">${item.title}</h2>
+				<p class="photo-description">${item.explanation}</p>
+			</div>
+		</article>
+	`).join('');
+
+	gallery.innerHTML = `<div class="placeholder"><p>${message}</p></div>${cardsHtml}`;
 }
