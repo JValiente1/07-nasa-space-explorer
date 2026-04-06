@@ -20,6 +20,35 @@ const SPACE_FACTS = [
 const NASA_API_KEY = 'aH4Uf99aBm4zRtlFD8BqA7pk0aeRexhbIcQj7HSR';
 const APOD_ENDPOINT = 'https://api.nasa.gov/planetary/apod';
 const DESCRIPTION_PREVIEW_LENGTH = 220;
+const THEMES = {
+	classic: {
+		'--space-navy': '#061f4a',
+		'--space-blue': '#0b3d91',
+		'--star-white': '#ffffff',
+		'--sky-glow': '#e1f3f8',
+		'--panel': '#ffffff',
+		'--text-main': '#212121',
+		'--text-soft': '#323a45',
+		'--accent': '#02bfe7',
+		'--accent-hover': '#00a6d2',
+		'--highlight': '#f9aa43',
+		'--line': '#dce4ef'
+	},
+	bright: {
+		'--space-navy': '#046b99',
+		'--space-blue': '#105bd8',
+		'--star-white': '#ffffff',
+		'--sky-glow': '#f1fbff',
+		'--panel': '#ffffff',
+		'--text-main': '#212121',
+		'--text-soft': '#323a45',
+		'--accent': '#f9aa43',
+		'--accent-hover': '#ff9d1e',
+		'--highlight': '#02bfe7',
+		'--line': '#dce4ef'
+	}
+};
+const THEME_STORAGE_KEY = 'nasa-space-explorer-theme';
 let modalOverlay;
 let modalMedia;
 let modalTitle;
@@ -32,6 +61,7 @@ let modalExplanation;
 // - Restrict dates to NASA's image archive (starting from 1995)
 setupDateInputs(startInput, endInput);
 setupModal();
+setupThemeSwitcher();
 renderRandomFact();
 
 // Load images immediately for the default date range.
@@ -216,7 +246,7 @@ function injectModalStyles() {
 		}
 
 		.gallery-item:focus-visible {
-			outline: 3px solid var(--accent, #ff6f3c);
+			outline: 3px solid var(--accent, #02bfe7);
 			outline-offset: 2px;
 		}
 
@@ -247,7 +277,7 @@ function injectModalStyles() {
 			max-height: 92vh;
 			overflow: auto;
 			background: #ffffff;
-			border: 1px solid #dce5f5;
+			border: 1px solid #dce4ef;
 			border-radius: 14px;
 			box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
 			transform: translateY(12px) scale(0.98);
@@ -263,7 +293,7 @@ function injectModalStyles() {
 		.apod-modal-close {
 			display: block;
 			margin: 14px 14px 0 auto;
-			background: linear-gradient(120deg, #ff6f3c, #ff9b54);
+			background: linear-gradient(120deg, #02bfe7, #0b3d91);
 			color: #fff;
 			border: none;
 			border-radius: 8px;
@@ -297,7 +327,7 @@ function injectModalStyles() {
 			font-weight: 700;
 			text-transform: uppercase;
 			letter-spacing: 0.6px;
-			color: #3f5684;
+			color: #205493;
 			margin-bottom: 6px;
 		}
 
@@ -308,7 +338,7 @@ function injectModalStyles() {
 
 		.apod-modal-explanation {
 			line-height: 1.6;
-			color: #465f8e;
+			color: #323a45;
 			padding-bottom: 8px;
 		}
 
@@ -329,7 +359,7 @@ function injectModalStyles() {
 			display: block;
 			margin: 0 auto 12px;
 			animation: nasa-spin 1.8s linear infinite;
-			filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.35));
+			filter: drop-shadow(0 0 10px rgba(225, 243, 248, 0.75));
 		}
 
 		@keyframes nasa-spin {
@@ -396,15 +426,66 @@ function renderRandomFact() {
 	factBox.setAttribute('aria-live', 'polite');
 	factBox.style.margin = '0 0 14px';
 	factBox.style.padding = '12px 14px';
-	factBox.style.background = 'rgba(255, 255, 255, 0.87)';
-	factBox.style.border = '1px solid rgba(255, 255, 255, 0.58)';
+	factBox.style.background = 'rgba(225, 243, 248, 0.95)';
+	factBox.style.border = '1px solid rgba(155, 218, 241, 0.9)';
 	factBox.style.borderRadius = '12px';
-	factBox.style.color = '#1c2742';
-	factBox.style.boxShadow = '0 8px 20px rgba(6, 18, 46, 0.14)';
+	factBox.style.color = '#212121';
+	factBox.style.boxShadow = '0 10px 22px rgba(6, 31, 74, 0.2)';
 
 	factBox.innerHTML = `<strong>Did You Know?</strong> ${randomFact}`;
 
 	gallery.parentNode.insertBefore(factBox, gallery);
+}
+
+function setupThemeSwitcher() {
+	const filters = document.querySelector('.filters');
+
+	if (!filters || document.getElementById('themeSwitcher')) {
+		return;
+	}
+
+	const wrapper = document.createElement('label');
+	wrapper.className = 'filter-toggle';
+	wrapper.setAttribute('for', 'themeSwitcher');
+	wrapper.style.gap = '10px';
+
+	const labelText = document.createElement('span');
+	labelText.textContent = 'Theme';
+
+	const select = document.createElement('select');
+	select.id = 'themeSwitcher';
+	select.setAttribute('aria-label', 'Choose color theme');
+	select.style.border = '1px solid var(--line)';
+	select.style.borderRadius = '8px';
+	select.style.padding = '6px 8px';
+	select.style.fontFamily = 'Trebuchet MS, sans-serif';
+	select.style.background = '#ffffff';
+
+	select.innerHTML = `
+		<option value="classic">Classic NASA Blue</option>
+		<option value="bright">Bright Mission Control</option>
+	`;
+
+	wrapper.appendChild(labelText);
+	wrapper.appendChild(select);
+	filters.insertBefore(wrapper, getImagesButton);
+
+	const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'classic';
+	select.value = savedTheme;
+	applyTheme(savedTheme);
+
+	select.addEventListener('change', () => {
+		applyTheme(select.value);
+		localStorage.setItem(THEME_STORAGE_KEY, select.value);
+	});
+}
+
+function applyTheme(themeName) {
+	const theme = THEMES[themeName] || THEMES.classic;
+
+	Object.entries(theme).forEach(([variableName, value]) => {
+		document.documentElement.style.setProperty(variableName, value);
+	});
 }
 
 function createMediaElement(item) {
@@ -485,7 +566,7 @@ function showLoading() {
 	gallery.innerHTML = `
 		<div class="placeholder">
 			<img src="img/nasa-worm-logo.png" alt="NASA emblem" class="nasa-loading-logo" />
-			<p>traveling through the galaxy at E=mc^2</p>
+			<p>traveling the the galaxy at E=mc²</p>
 		</div>
 	`;
 }
